@@ -61,7 +61,7 @@ def setup_sidebar() -> None:
             "<h2 style='text-align: center;'>Settings 🛠️ </h2> ", unsafe_allow_html=True
         )
 
-        with st.expander("Chat Settings", expanded=True):
+        with st.expander("Chat Settings", expanded=False):
             saved_chats = st.session_state.get("saved_chats", [])
             selected_chat = st.selectbox(
                 "Load Chat History", options=[""] + saved_chats
@@ -104,10 +104,7 @@ def setup_sidebar() -> None:
                     "model": model_options[0] if model_options else "",
                     "max_tokens": 1024,
                     "temperature": 1.0,
-                    "top_p": 1.0,
-                    "top_k": 50,
-                    "frequency_penalty": 0.5,
-                    "presence_penalty": 0.5,
+
                 }
 
             st.session_state.model_params["model"] = st.selectbox(
@@ -135,26 +132,6 @@ def setup_sidebar() -> None:
                 0.0,
                 2.0,
                 st.session_state.model_params["temperature"],
-                0.1,
-            )
-            st.session_state.model_params["top_p"] = st.slider(
-                "Top-p:", 0.0, 1.0, st.session_state.model_params["top_p"], 0.1
-            )
-            st.session_state.model_params["top_k"] = st.slider(
-                "Top-k:", 0, 100, st.session_state.model_params["top_k"]
-            )
-            st.session_state.model_params["frequency_penalty"] = st.slider(
-                "Frequency Penalty:",
-                0.0,
-                1.0,
-                st.session_state.model_params["frequency_penalty"],
-                0.1,
-            )
-            st.session_state.model_params["presence_penalty"] = st.slider(
-                "Presence Penalty:",
-                0.0,
-                1.0,
-                st.session_state.model_params["presence_penalty"],
                 0.1,
             )
 
@@ -210,29 +187,29 @@ def setup_sidebar() -> None:
                 except Exception as e:
                     st.error(f"Error processing file: {str(e)}")
 
-        with st.expander("Summarize"):
-            st.session_state.show_summarization = st.checkbox(
-                "Enable Summarization", value=False
-            )
-            if st.session_state.show_summarization:
-                st.session_state.summarization_type = st.selectbox(
-                    "Summarization Type:",
-                    [
-                        "Main Takeaways",
-                        "Main points bulleted",
-                        "Concise Summary",
-                        "Executive Summary",
-                    ],
-                )
+        # with st.expander("Summarize"):
+        #     st.session_state.show_summarization = st.checkbox(
+        #         "Enable Summarization", value=False
+        #     )
+        #     if st.session_state.show_summarization:
+        #         st.session_state.summarization_type = st.selectbox(
+        #             "Summarization Type:",
+        #             [
+        #                 "Main Takeaways",
+        #                 "Main points bulleted",
+        #                 "Concise Summary",
+        #                 "Executive Summary",
+        #             ],
+        #         )
 
-        with st.expander("Content Generation"):
-            st.session_state.content_creation_mode = st.checkbox(
-                "Enable Content Creation Mode", value=False
-            )
-            if st.session_state.content_creation_mode:
-                st.session_state.content_type = st.selectbox(
-                    "Select Content Type:", list(CONTENT_TYPES.keys())
-                )
+        # with st.expander("Content Generation"):
+        #     st.session_state.content_creation_mode = st.checkbox(
+        #         "Enable Content Creation Mode", value=False
+        #     )
+        #     if st.session_state.content_creation_mode:
+        #         st.session_state.content_type = st.selectbox(
+        #             "Select Content Type:", list(CONTENT_TYPES.keys())
+        #         )
 
         with st.expander("Export"):
             export_format = st.selectbox(
@@ -253,23 +230,30 @@ def setup_sidebar() -> None:
                             mime="application/octet-stream",
                         )
 
-        st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
-        if st.session_state.color_scheme == "Dark":
-            st.markdown(
-                """
-                <style>
-                .stApp {
-                    background-color: #1E1E1E;
-                    color: #FFFFFF;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
+        # st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
+        # if st.session_state.color_scheme == "Dark":
+        #     st.markdown(
+        #         """
+        #         <style>
+        #         .stApp {
+        #             background-color: #1E1E1E;
+        #             color: #FFFFFF;
+        #         }
+        #         </style>
+        #         """,
+        #         unsafe_allow_html=True,
+        #     )
 
 
 async def main():
-    st.title("Multimodal Chat App")
+    st.markdown(
+            '<h1 style="text-align: center; color: #6ca395;">GenAI-Chat 💬</h1>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+            '<p style="text-align: center; color : #74a6d4">Experience the power of AI!</p>',
+            unsafe_allow_html=True,
+        )
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "model_params" not in st.session_state:
@@ -277,10 +261,6 @@ async def main():
             "model": "",
             "max_tokens": 1024,
             "temperature": 1.0,
-            "top_p": 1.0,
-            "top_k": 50,
-            "frequency_penalty": 0.5,
-            "presence_penalty": 0.5,
         }
 
     setup_sidebar()
