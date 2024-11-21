@@ -12,6 +12,7 @@ import pandas as pd
 from io import StringIO
 from functools import lru_cache
 import streamlit as st
+from ratelimit import limits, sleep_and_retry  # Add this import
 from api.groq_api import stream_groq_response, GroqAPIError
 from api.openai_api import stream_openai_response
 from api.anthropic_api import stream_anthropic_response

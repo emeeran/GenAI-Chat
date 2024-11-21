@@ -1,3 +1,6 @@
+import asyncio
+import streamlit as st
+from utils import get_api_client, stream_llm_response
 
 async def create_database():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -108,3 +111,87 @@ def get_model_options(provider):
     elif provider == "Anthropic":
         return ["claude-v1", "claude-v1.3", "claude-instant-v1.3"]
     return []
+
+
+async def process_chat_input(prompt):
+    messages = st.session_state.messages + [{"role": "user", "content": prompt}]
+    full_response = ""
+
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        client = get_api_client(st.session_state.provider)
+        if client is None:
+            message_placeholder.error("API Key not set for selected provider!")
+            return
+
+        async for chunk in stream_llm_response(client, st.session_state.model_params, messages, st.session_state.provider):
+            full_response += chunk
+            message_placeholder.markdown(full_response + "▌")
+        message_placeholder.markdown(full_response)
+
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+
+async def generate_content(prompt: str, content_type: str) -> str:
+    full_prompt = f"Generate {content_type} content for: {prompt}"
+    generated_content = ""
+    async for chunk in async_stream_llm_response(
+        get_api_client(st.session_state.provider),
+        st.session_state.model_params,
+        [{"role": "user", "content": full_prompt}],
+        st.session_state.provider,
+        st.session_state.voice,
+    ):
+        generated_content += chunk
+    return generated_content
+
+
+async def summarize_text(text: str, summary_type: str) -> str:
+    full_prompt = f"Please provide a {summary_type} of the following text: {text}"
+    summary = ""
+    async for chunk in async_stream_llm_response(
+        get_api_client(st.session_state.provider),
+        st.session_state.model_params,
+        [{"role": "user", "content": full_prompt}],
+        st.session_state.provider,
+        st.session_state.voice,
+    ):
+        summary += chunk
+    return summary
+
+import os
+from utils import (
+    setup_sidebar,
+    handle_file_upload,
+    get_model_options,
+    get_max_token_limit,
+)
+from async_functions import process_chat_input
+
+async def main():
+    st.title("Multimodal Chat App")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "model_params" not in st.session_state:
+        st.session_state.model_params = {
+            "model": "",
+            "max_tokens": 1024,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.5,
+        }
+
+    setup_sidebar()
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    prompt = st.chat_input("Enter your message:")
+    if prompt:
+        await process_chat_input(prompt)
+
+if __name__ == "__main__":
+    st.set_page_config(page_title="Multimodal Chat App", page_icon="💬")
+    asyncio.run(main())
