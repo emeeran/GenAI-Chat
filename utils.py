@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 from functools import lru_cache
 from typing import Dict, List, Optional
+import time
 
 # Third party imports
 import streamlit as st
@@ -21,11 +22,29 @@ import docx
 import openpyxl
 from pptx import Presentation
 import openai
+from transformers import AutoTokenizer
 
 # Local imports
 from api.groq_api import stream_groq_response, GroqAPIError
 from api.openai_api import stream_openai_response
 from api.anthropic_api import stream_anthropic_response
+
+# Define file type handlers
+file_handlers = {
+    "application/pdf": lambda f: " ".join(
+        page.extract_text() for page in PyPDF2.PdfReader(f).pages
+    ),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": lambda f: " ".join(
+        paragraph.text for paragraph in docx.Document(f).paragraphs
+    ),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": lambda f: process_excel_file(f),
+    "application/vnd.ms-powerpoint": lambda f: process_ppt_file(f),
+    "text/plain": lambda f: f.getvalue().decode("utf-8"),
+    "text/markdown": lambda f: f.getvalue().decode("utf-8"),
+    "image/jpeg": lambda f: perform_ocr(f),
+    "image/png": lambda f: perform_ocr(f),
+    "text/csv": lambda f: pd.read_csv(f).to_string(),
+}
 
 # Configure logging
 logging.basicConfig(
@@ -39,6 +58,9 @@ logger = logging.getLogger(__name__)
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
+# Initialize tokenizer
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 # Utility Functions
 def validate_prompt(prompt: str):
@@ -197,28 +219,27 @@ async def process_chat_input(prompt: str) -> None:
                 logger.error(f"Audio generation error: {str(e)}", exc_info=True)
 
 def handle_file_upload(uploaded_file):
-    file_handlers = {
-        "application/pdf": lambda f: " ".join(
-            page.extract_text() for page in PyPDF2.PdfReader(f).pages
-        ),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": lambda f: " ".join(
-            paragraph.text for paragraph in docx.Document(f).paragraphs
-        ),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.document": lambda f: process_excel_file(
-            f
-        ),
-        "application/vnd.ms-powerpoint": lambda f: process_ppt_file(f),
-        "text/plain": lambda f: f.getvalue().decode("utf-8"),
-        "text/markdown": lambda f: f.getvalue().decode("utf-8"),
-        "image/jpeg": lambda f: perform_ocr(f),
-        "image/png": lambda f: perform_ocr(f),
-    }
+    """Handle file upload with token limit awareness"""
+    try:
+        content = None
+        for file_type, handler in file_handlers.items():
+            if uploaded_file.type.startswith(file_type):
+                content = handler(uploaded_file)
+                break
 
-    for file_type, handler in file_handlers.items():
-        if uploaded_file.type.startswith(file_type):
-            return handler(uploaded_file)
+        if content is None:
+            raise ValueError("Unsupported file type")
 
-    raise ValueError("Unsupported file type")
+        # Check token count
+        token_count = len(tokenizer.encode(content))
+        if token_count > 5000:
+            logger.warning(f"Large content detected ({token_count} tokens). Content will be processed in chunks.")
+
+        return content
+
+    except Exception as e:
+        logger.error(f"Error handling file upload: {str(e)}")
+        raise
 
 def text_to_speech(text: str, lang: str):
     try:
@@ -248,121 +269,68 @@ def generate_openai_tts(text: str, voice: str):
         logger.error(f"OpenAI TTS error: {str(e)}")
         raise
 
-def translate_text(text: str, target_lang: str) -> str:
-    if target_lang == "English":
-        return text
-    translator = GoogleTranslator(source="auto", target=target_lang)
-    return translator.translate(text)
+def sync_process_chat(prompt: str) -> None:
+    """Synchronous wrapper for async chat processing"""
+    import nest_asyncio
+    import asyncio
 
-def save_feedback(feedback: str):
-    if "feedback.json" not in os.listdir():
-        with open("feedback.json", "w") as f:
-            json.dump([], f)
+    # Apply patch for nested event loops
+    nest_asyncio.apply()
 
-    with open("feedback.json", "r+") as f:
-        feedback_data = json.load(f)
-        feedback_data.append(feedback)
-        f.seek(0)
-        json.dump(feedback_data, f)
-
-def reset_current_chat():
-    st.session_state.messages = []
-    st.session_state.is_file_response_handled = False
-
-def is_connected():
+    # Get or create event loop
     try:
-        response = requests.get("http://www.google.com", timeout=5)
-        return response.status_code == 200
-    except requests.ConnectionError:
-        return False
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-def save_chat_history_locally():
-    chat_data = [
-        {"role": msg["role"], "content": msg["content"]}
-        for msg in st.session_state.messages
-    ]
-    with open("local_chat_history.json", "w") as f:
-        json.dump(chat_data, f)
+    # Run async function
+    loop.run_until_complete(process_chat_input(prompt))
 
-def load_chat_history_locally():
-    if os.path.exists("local_chat_history.json"):
-        with open("local_chat_history.json", "r") as f:
-            return json.load(f)
-    return []
+def chunk_content(text: str, max_tokens: int = 5000) -> List[str]:
+    """Split content into chunks that fit within token limits"""
+    chunks = []
+    current_chunk = ""
+    current_tokens = 0
 
-def update_token_count(tokens: int):
-    st.session_state.total_tokens = (
-        getattr(st.session_state, "total_tokens", 0) + tokens
-    )
-    st.session_state.total_cost = (
-        getattr(st.session_state, "total_cost", 0) + tokens * 0.0001
-    )
+    sentences = text.split('. ')
+    for sentence in sentences:
+        sentence_tokens = len(tokenizer.encode(sentence))
+        if current_tokens + sentence_tokens > max_tokens:
+            chunks.append(current_chunk)
+            current_chunk = sentence
+            current_tokens = sentence_tokens
+        else:
+            current_chunk += sentence + '. '
+            current_tokens += sentence_tokens
 
-def export_chat(format: str) -> str:
-    if not st.session_state.messages:
-        st.warning("No chat history available to export.")
-        logger.warning("Export attempted with no chat messages.")
-        return None
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
 
-    chat_history = "\n\n".join(
-        [
-            f"**{m['role'].capitalize()}:** {m['content']}"
-            for m in st.session_state.messages
-        ]
-    ).strip()
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"chat_exports/chat_history_{timestamp}.{format}"
-    os.makedirs("chat_exports", exist_ok=True)
-
-    try:
-        if format == "md":
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(chat_history)
-        elif format == "pdf":
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            pdf.multi_cell(0, 10, chat_history)
-            pdf.output(filename)
-        elif format == "txt":
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(chat_history)
-        elif format == "docx":
-            from docx import Document
-            doc = Document()
-            doc.add_paragraph(chat_history)
-            doc.save(filename)
-        elif format == "json":
-            chat_data = [
-                {"role": msg["role"], "content": msg["content"]}
-                for msg in st.session_state.messages
-            ]
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(chat_data, f, indent=4)
-
-        logger.info(f"Chat exported successfully to {filename}")
-        return filename
-
-    except Exception as e:
-        logger.error(f"Error exporting chat: {e}", exc_info=True)
-        st.error(f"An error occurred while exporting the chat: {e}")
-        return None
-
-def process_file_content(content: str, operation: str) -> str:
+def process_file_content(content: str, operation: str) -> None:
     """Process file content based on selected operation"""
     try:
-        if operation == "summarize":
-            prompt = f"Please provide a concise summary of this content:\n\n{content}"
-        elif operation == "bullet_points":
-            prompt = f"Extract the main points as bullets from this content:\n\n{content}"
-        elif operation == "analyze":
-            prompt = f"Analyze the key themes and insights from this content:\n\n{content}"
+        # Split content into manageable chunks
+        chunks = chunk_content(content)
+        responses = []
 
-        user_message = {"role": "user", "content": prompt}
-        st.session_state.messages.append(user_message)
+        for i, chunk in enumerate(chunks):
+            if i > 0:
+                time.sleep(1)  # Rate limiting
 
-        return prompt
+            if operation == "summarize":
+                prompt = f"Please provide a concise summary of this content part {i+1}/{len(chunks)}:\n\n{chunk}"
+            elif operation == "bullet_points":
+                prompt = f"Extract the main points as bullets from this content part {i+1}/{len(chunks)}:\n\n{chunk}"
+            elif operation == "analyze":
+                prompt = f"Analyze the key themes and insights from this content part {i+1}/{len(chunks)}:\n\n{chunk}"
+
+            sync_process_chat(prompt)
+
+        if len(chunks) > 1:
+            # Add final summary combining all parts
+            sync_process_chat("Please provide a final combined summary of all the parts discussed above.")
 
     except Exception as e:
         logger.error(f"Error processing file content: {str(e)}")
@@ -379,3 +347,54 @@ def update_file_context():
             st.session_state.messages = [system_message]
         else:
             st.session_state.messages.insert(0, system_message)
+
+def export_chat(export_format: str) -> Optional[str]:
+    """Export chat history in the specified format"""
+    try:
+        if not st.session_state.messages:
+            logger.warning("No chat history to export")
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"chat_export_{timestamp}.{export_format}"
+
+        if export_format == "json":
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(st.session_state.messages, f, indent=2, ensure_ascii=False)
+
+        elif export_format == "txt":
+            with open(filename, "w", encoding="utf-8") as f:
+                for msg in st.session_state.messages:
+                    f.write(f"{msg['role'].upper()}: {msg['content']}\n\n")
+
+        elif export_format == "md":
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("# Chat Export\n\n")
+                for msg in st.session_state.messages:
+                    f.write(f"### {msg['role'].title()}\n{msg['content']}\n\n")
+
+        elif export_format == "pdf":
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            for msg in st.session_state.messages:
+                pdf.cell(200, 10, txt=f"{msg['role'].upper()}:", ln=True)
+                pdf.multi_cell(200, 10, txt=msg['content'])
+                pdf.ln()
+            pdf.output(filename)
+
+        elif export_format == "docx":
+            doc = docx.Document()
+            doc.add_heading('Chat Export', 0)
+            for msg in st.session_state.messages:
+                doc.add_heading(msg['role'].title(), level=2)
+                doc.add_paragraph(msg['content'])
+                doc.add_paragraph()
+            doc.save(filename)
+
+        logger.info(f"Chat exported to {filename}")
+        return filename
+
+    except Exception as e:
+        logger.error(f"Error exporting chat: {str(e)}", exc_info=True)
+        return None

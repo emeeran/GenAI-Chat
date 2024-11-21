@@ -173,30 +173,36 @@ def setup_sidebar() -> None:
             )
 
         with st.expander("File Upload"):
-            uploaded_file = st.file_uploader(
+            st.session_state.uploaded_file = st.file_uploader(
                 "Choose a file",
                 type=['txt', 'csv', 'pdf', 'docx', 'xlsx', 'ppt', 'jpg', 'png', 'md']
             )
 
-            if uploaded_file is not None:
+            if st.session_state.uploaded_file is not None:
                 try:
-                    text_content = handle_file_upload(uploaded_file)
+                    text_content = handle_file_upload(st.session_state.uploaded_file)
                     st.session_state.file_content = text_content
-                    st.success(f"File '{uploaded_file.name}' loaded successfully!")
+                    st.success(f"File '{st.session_state.uploaded_file.name}' loaded successfully!")
 
-                    # Add file processing options
-                    operation = st.selectbox(
-                        "Select operation:",
-                        ["Chat about content", "Summarize", "Extract bullet points", "Analyze"]
-                    )
+                    # File operations
+                    st.divider()
+                    col1, col2 = st.columns([3,1])
 
-                    if st.button("Process"):
-                        if operation == "Chat about content":
-                            update_file_context()
-                            st.info("File content added to chat context. You can now chat about it!")
-                        else:
-                            prompt = process_file_content(text_content, operation.lower())
-                            asyncio.run(process_chat_input(prompt))
+                    with col1:
+                        operation = st.selectbox(
+                            "Select operation",
+                            ["Chat", "Summarize", "Bullets", "Analyze"],
+                            key="file_operation"
+                        )
+
+                    with col2:
+                        if st.button("Go🏃", type="primary"):
+                            if operation == "Chat":
+                                update_file_context()
+                                st.info("File loaded! You can now chat about its contents.", icon="💬")
+                            else:
+                                st.session_state.processing_operation = operation.lower()
+                                st.session_state.processing_content = text_content
 
                 except Exception as e:
                     st.error(f"Error processing file: {str(e)}")
@@ -216,6 +222,45 @@ def setup_sidebar() -> None:
                             file_name=os.path.basename(filename),
                             mime="application/octet-stream",
                         )
+
+def setup_file_upload():
+    """Setup file upload and processing section"""
+    # Remove outer expander - already inside sidebar expander
+    uploaded_file = st.file_uploader(
+        "Choose a file",
+        type=['txt', 'csv', 'pdf', 'docx', 'xlsx', 'ppt', 'jpg', 'png', 'md']
+    )
+
+    if uploaded_file is not None:
+        try:
+            text_content = handle_file_upload(uploaded_file)
+            st.session_state.file_content = text_content
+            st.success(f"File '{uploaded_file.name}' loaded successfully!")
+
+            # File operations
+            st.divider()
+            col1, col2 = st.columns([3,1])
+
+            with col1:
+                operation = st.selectbox(
+                    "Select operation",
+                    ["Chat", "Summarize", "Bullets", "Analyze"],
+                    key="file_operation"
+                )
+
+            with col2:
+                if st.button("Process", type="primary"):
+                    if operation == "Chat":
+                        update_file_context()
+                        st.info("File loaded! You can now chat about its contents.", icon="💬")
+                    else:
+                        st.session_state.processing_operation = operation.lower()
+                        st.session_state.processing_content = text_content
+
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+
+    return uploaded_file
 
 async def main():
     st.markdown(
@@ -243,6 +288,15 @@ async def main():
     prompt = st.chat_input("Enter your message:")
     if prompt:
         await process_chat_input(prompt)
+
+    if hasattr(st.session_state, 'processing_operation'):
+        process_file_content(
+            st.session_state.processing_content,
+            st.session_state.processing_operation
+        )
+        # Clear processing state
+        del st.session_state.processing_operation
+        del st.session_state.processing_content
 
 
 if __name__ == "__main__":
