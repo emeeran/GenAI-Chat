@@ -6,8 +6,9 @@ import json
 import base64
 from datetime import datetime
 from functools import lru_cache
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import time
+from pathlib import Path
 
 # Third party imports
 import streamlit as st
@@ -431,3 +432,66 @@ def reset_current_chat():
             del st.session_state[key]
 
     logger.info("Chat session reset")
+
+def save_chat(chat_name: str) -> bool:
+    """Save current chat session"""
+    try:
+        if not st.session_state.messages:
+            logger.warning("No chat history to save")
+            return False
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{chat_name}_{timestamp}.json"
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(st.session_state.messages, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Chat saved to {filename}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving chat: {str(e)}", exc_info=True)
+        return False
+
+def save_session_state(chat_name: str, session_dir: str = "sessions") -> bool:
+    """Save chat history and settings with a given name"""
+    try:
+        Path(session_dir).mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{chat_name}_{timestamp}.json"
+        filepath = Path(session_dir) / filename
+
+        # Save messages and settings
+        chat_state = {
+            "messages": st.session_state.messages,
+            "settings": {
+                "model": st.session_state.model_params["model"],
+                "temperature": st.session_state.model_params["temperature"],
+                "persona": st.session_state.persona,
+                "custom_persona": st.session_state.get("custom_persona", "")
+            },
+            "timestamp": timestamp
+        }
+
+        with open(filepath, 'w') as f:
+            json.dump(chat_state, f, indent=2)
+
+        # Update saved chats list
+        if "saved_chats" not in st.session_state:
+            st.session_state.saved_chats = []
+        st.session_state.saved_chats.append(filename)
+
+        return True
+    except Exception as e:
+        logging.error(f"Failed to save chat: {e}")
+        return False
+
+def load_session_state(filepath: str) -> Optional[Dict[str, Any]]:
+    """Load saved chat history"""
+    try:
+        with open(filepath, 'r') as f:
+            state = json.load(f)
+        return state
+    except Exception as e:
+        logging.error(f"Failed to load chat: {e}")
+        return None
