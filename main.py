@@ -9,6 +9,10 @@ from PIL import Image
 import io
 import pandas as pd
 from io import StringIO
+from datetime import datetime
+import json
+from fpdf import FPDF
+import docx
 
 # Import utility functions from utils.py
 from utils import (
@@ -21,6 +25,7 @@ from utils import (
     stream_llm_response,
     process_chat_input,
     handle_file_upload,
+    export_chat,  # Add this import
 )
 
 # Absolute imports - specify the full path from the project root
@@ -274,5 +279,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Multimodal Chat App", page_icon="💬")
+    st.set_page_config(page_title="GenAI-Chat", page_icon="💬")
     asyncio.run(main())

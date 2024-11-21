@@ -16,6 +16,22 @@ from ratelimit import limits, sleep_and_retry  # Add this import
 from api.groq_api import stream_groq_response, GroqAPIError
 from api.openai_api import stream_openai_response
 from api.anthropic_api import stream_anthropic_response
+from datetime import datetime
+
+# At the top of utils.py with other imports
+import logging
+import os
+import re
+from datetime import datetime
+from typing import Optional, List
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Import API keys from environment variables
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
@@ -55,13 +71,18 @@ def process_excel_file(file_obj):
 
 
 def process_ppt_file(file_obj):
-    prs = Presentation(file)
-    text = []
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if hasattr(shape, "text"):
-                text.append(shape.text)
-    return "\n".join(text)
+    try:
+        prs = Presentation(file_obj)
+        text = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    text.append(shape.text)
+        logger.info(f"Successfully processed PowerPoint file")
+        return "\n".join(text)
+    except Exception as e:
+        logger.error(f"Error processing PowerPoint file: {str(e)}", exc_info=True)
+        return f"Error processing PowerPoint file: {str(e)}"
 
 def get_max_token_limit(model: str) -> int:
     token_limits = {
@@ -372,13 +393,17 @@ def process_excel_file(file):
 
 
 def process_ppt_file(file):
-    prs = Presentation(file)
-    text = []
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if hasattr(shape, "text"):
-                text.append(shape.text)
-    return "\n".join(text)
+    try:
+        prs = Presentation(file)
+        text = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    text.append(shape.text)
+        return "\n".join(text)
+    except Exception as e:
+        logger.error(f"Error processing PPT file: {str(e)}")
+        return f"Error processing PPT file: {str(e)}"
 
 
 def text_to_speech(text: str, lang: str):
@@ -477,3 +502,27 @@ def export_chat(format: str) -> str:
         logger.error(f"Error exporting chat: {e}", exc_info=True)
         st.error(f"An error occurred while exporting the chat: {e}")
         return None
+
+# main.py
+import streamlit as st
+import asyncio
+import os
+from datetime import datetime
+from functools import lru_cache
+from PIL import Image
+from io import StringIO
+from fpdf import FPDF
+
+# Import utility functions from utils.py
+from utils import (
+    perform_ocr,
+    process_excel_file,
+    process_ppt_file,
+    get_max_token_limit,
+    get_model_options,
+    get_api_client,
+    stream_llm_response,
+    process_chat_input,
+    handle_file_upload,
+    export_chat,
+)
