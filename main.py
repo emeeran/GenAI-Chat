@@ -18,6 +18,7 @@ from utils import (
     export_chat,
     process_file_content,
     update_file_context,
+    reset_current_chat,  # Add this import
 )
 
 # Absolute imports - specify the full path from the project root
@@ -68,11 +69,12 @@ def setup_sidebar() -> None:
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                if st.button("Rerun"):
-                    st.rerun()
+                if st.button("🔄 Rerun"):
+                    rerun()  # Use experimental_rerun instead of rerun
             with col5:
                 if st.button("New"):
                     reset_current_chat()
+                    st.rerun()
             with col6:
                 if st.button("Delete"):
                     if selected_chat:

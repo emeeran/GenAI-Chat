@@ -311,25 +311,29 @@ def chunk_content(text: str, max_tokens: int = 5000) -> List[str]:
 def process_file_content(content: str, operation: str) -> None:
     """Process file content based on selected operation"""
     try:
-        # Split content into manageable chunks
-        chunks = chunk_content(content)
-        responses = []
+        # Map operations to prompts
+        operation_prompts = {
+            "summarize": "Please provide a concise summary of this content:\n\n",
+            "bullets": "Extract and list the main points as bullet points from this content:\n\n",
+            "bullet_points": "Extract and list the main points as bullet points from this content:\n\n",
+            "analyze": "Analyze the key themes and insights from this content:\n\n"
+        }
 
+        # Get prompt template or raise error for invalid operation
+        if operation not in operation_prompts:
+            raise ValueError(f"Invalid operation: {operation}")
+
+        prompt = operation_prompts[operation] + content
+
+        # Process chunks if content is large
+        chunks = chunk_content(content)
         for i, chunk in enumerate(chunks):
             if i > 0:
                 time.sleep(1)  # Rate limiting
-
-            if operation == "summarize":
-                prompt = f"Please provide a concise summary of this content part {i+1}/{len(chunks)}:\n\n{chunk}"
-            elif operation == "bullet_points":
-                prompt = f"Extract the main points as bullets from this content part {i+1}/{len(chunks)}:\n\n{chunk}"
-            elif operation == "analyze":
-                prompt = f"Analyze the key themes and insights from this content part {i+1}/{len(chunks)}:\n\n{chunk}"
-
-            sync_process_chat(prompt)
+            chunk_prompt = f"{operation_prompts[operation]} (Part {i+1}/{len(chunks)}):\n\n{chunk}"
+            sync_process_chat(chunk_prompt)
 
         if len(chunks) > 1:
-            # Add final summary combining all parts
             sync_process_chat("Please provide a final combined summary of all the parts discussed above.")
 
     except Exception as e:
@@ -398,3 +402,32 @@ def export_chat(export_format: str) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error exporting chat: {str(e)}", exc_info=True)
         return None
+
+def reset_current_chat():
+    """Reset chat history and session state"""
+    # Clear messages
+    st.session_state.messages = []
+
+    # Reset model parameters
+    st.session_state.model_params = {
+        "model": "",
+        "max_tokens": 1024,
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "top_k": 50,
+        "frequency_penalty": 0.5,
+        "presence_penalty": 0.5,
+    }
+
+    # Clear file related states
+    keys_to_clear = [
+        'file_content',
+        'uploaded_file',
+        'processing_operation',
+        'processing_content'
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+
+    logger.info("Chat session reset")
