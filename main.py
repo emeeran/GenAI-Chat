@@ -2,17 +2,7 @@ import streamlit as st
 import asyncio
 import os
 from functools import lru_cache
-import PyPDF2
-import docx
-import pytesseract
-from PIL import Image
-import io
 import pandas as pd
-from io import StringIO
-from datetime import datetime
-import json
-from fpdf import FPDF
-import docx
 
 # Import utility functions from utils.py
 from utils import (
@@ -25,7 +15,7 @@ from utils import (
     stream_llm_response,
     process_chat_input,
     handle_file_upload,
-    export_chat,  # Add this import
+    export_chat,
 )
 
 # Absolute imports - specify the full path from the project root
@@ -104,13 +94,11 @@ def setup_sidebar() -> None:
 
         with st.expander("Model"):
             model_options = get_model_options(st.session_state.provider)
-            if not isinstance(st.session_state.model_params, dict):
-                st.session_state.model_params = {
-                    "model": model_options[0] if model_options else "",
-                    "max_tokens": 1024,
-                    "temperature": 1.0,
-
-                }
+            st.session_state.model_params = st.session_state.get("model_params", {
+                "model": model_options[0] if model_options else "",
+                "max_tokens": 1024,
+                "temperature": 1.0,
+            })
 
             st.session_state.model_params["model"] = st.selectbox(
                 "Choose Model:",
@@ -192,41 +180,14 @@ def setup_sidebar() -> None:
                 except Exception as e:
                     st.error(f"Error processing file: {str(e)}")
 
-        # with st.expander("Summarize"):
-        #     st.session_state.show_summarization = st.checkbox(
-        #         "Enable Summarization", value=False
-        #     )
-        #     if st.session_state.show_summarization:
-        #         st.session_state.summarization_type = st.selectbox(
-        #             "Summarization Type:",
-        #             [
-        #                 "Main Takeaways",
-        #                 "Main points bulleted",
-        #                 "Concise Summary",
-        #                 "Executive Summary",
-        #             ],
-        #         )
-
-        # with st.expander("Content Generation"):
-        #     st.session_state.content_creation_mode = st.checkbox(
-        #         "Enable Content Creation Mode", value=False
-        #     )
-        #     if st.session_state.content_creation_mode:
-        #         st.session_state.content_type = st.selectbox(
-        #             "Select Content Type:", list(CONTENT_TYPES.keys())
-        #         )
-
         with st.expander("Export"):
             export_format = st.selectbox(
                 "Export Format", ["md", "pdf", "txt", "docx", "json"]
             )
             if st.button("Export Chat"):
                 filename = export_chat(export_format)
-                if (
-                    filename
-                ):  # Check if filename is valid before showing download button
+                if filename:
                     st.success("Chat exported successfully!")
-                    # Provide a download button for the user
                     with open(filename, "rb") as f:
                         st.download_button(
                             label="Download Chat",
@@ -234,21 +195,6 @@ def setup_sidebar() -> None:
                             file_name=os.path.basename(filename),
                             mime="application/octet-stream",
                         )
-
-        # st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
-        # if st.session_state.color_scheme == "Dark":
-        #     st.markdown(
-        #         """
-        #         <style>
-        #         .stApp {
-        #             background-color: #1E1E1E;
-        #             color: #FFFFFF;
-        #         }
-        #         </style>
-        #         """,
-        #         unsafe_allow_html=True,
-        #     )
-
 
 async def main():
     st.markdown(

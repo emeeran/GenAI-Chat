@@ -179,6 +179,23 @@ async def process_chat_input(prompt: str) -> None:
             {"role": "assistant", "content": full_response}
         )
 
+        # Handle audio response if enabled
+        if st.session_state.enable_audio:
+            try:
+                if st.session_state.provider == "OpenAI":
+                    generate_openai_tts(full_response, st.session_state.voice)
+                else:
+                    text_to_speech(full_response, st.session_state.language)
+
+                if hasattr(st.session_state, 'audio_base64'):
+                    st.audio(
+                        data=base64.b64decode(st.session_state.audio_base64),
+                        format='audio/mp3'
+                    )
+            except Exception as e:
+                st.error(f"Error generating audio: {str(e)}")
+                logger.error(f"Audio generation error: {str(e)}", exc_info=True)
+
 def handle_file_upload(uploaded_file):
     file_handlers = {
         "application/pdf": lambda f: " ".join(
@@ -208,25 +225,27 @@ def text_to_speech(text: str, lang: str):
         lang_map = {"English": "en", "Tamil": "ta", "Hindi": "hi"}
         lang_code = lang_map.get(lang, "en")
         tts = gTTS(text=text, lang=lang_code)
-        audio_file = os.path.join(os.getcwd(), "temp_audio.mp3")
+        audio_file = "temp_audio.mp3"
         tts.save(audio_file)
         with open(audio_file, "rb") as f:
             audio_bytes = f.read()
         os.remove(audio_file)
         st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
     except Exception as e:
-        raise Exception(f"Error in text-to-speech conversion: {str(e)}")
+        logger.error(f"gTTS error: {str(e)}")
+        raise
 
 def generate_openai_tts(text: str, voice: str):
     try:
-        response = client.audio.create(model="tts-1", input=text, voice=voice)
+        response = openai.audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text
+        )
         audio_bytes = response.content
         st.session_state.audio_base64 = base64.b64encode(audio_bytes).decode()
-    except openai.APIError as e:
-        logger.error(f"OpenAI API error: {e}")
-        raise
     except Exception as e:
-        logger.error(f"Error generating TTS with OpenAI: {e}")
+        logger.error(f"OpenAI TTS error: {str(e)}")
         raise
 
 def translate_text(text: str, target_lang: str) -> str:
