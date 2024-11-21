@@ -1,6 +1,15 @@
-import re
+# Standard library imports
 import os
-import base64
+import re
+import logging
+import json
+from io import StringIO
+from datetime import datetime
+from functools import lru_cache
+from typing import Dict, List, Optional
+
+# Third party imports
+import streamlit as st
 from PIL import Image
 import pytesseract
 from deep_translator import GoogleTranslator
@@ -9,21 +18,12 @@ from gtts import gTTS
 import PyPDF2
 import docx
 import pandas as pd
-from io import StringIO
-from functools import lru_cache
-import streamlit as st
-from ratelimit import limits, sleep_and_retry  # Add this import
+from ratelimit import limits, sleep_and_retry
+
+# Local imports
 from api.groq_api import stream_groq_response, GroqAPIError
 from api.openai_api import stream_openai_response
 from api.anthropic_api import stream_anthropic_response
-from datetime import datetime
-
-# At the top of utils.py with other imports
-import logging
-import os
-import re
-from datetime import datetime
-from typing import Optional, List
 
 # Configure logging
 logging.basicConfig(
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Import API keys from environment variables
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-OPENAI_API_KEY = os.getenv('GROQ_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 # Utility Functions
@@ -150,10 +150,23 @@ async def stream_llm_response(client, params, messages, provider):
     except Exception as e:
         yield f"API Error: {str(e)}"
 
-async def process_chat_input(prompt):
-    messages = st.session_state.messages + [{"role": "user", "content": prompt}]
-    full_response = ""
+def display_chat_message(message: Dict[str, str]) -> None:
+    """Display formatted chat message with user/assistant distinction"""
+    with st.chat_message(message["role"]):
+        if message["role"] == "user":
+            st.markdown(f"**You:** {message['content']}")
+            logger.info(f"User message: {message['content'][:100]}...")
+        else:
+            st.markdown(message["content"])
 
+async def process_chat_input(prompt: str) -> None:
+    """Process user input and display in chat"""
+    # Display and log user message
+    user_message = {"role": "user", "content": prompt}
+    display_chat_message(user_message)
+    st.session_state.messages.append(user_message)
+
+    # Process response
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         client = get_api_client(st.session_state.provider)
@@ -161,12 +174,21 @@ async def process_chat_input(prompt):
             message_placeholder.error("API Key not set for selected provider!")
             return
 
-        async for chunk in stream_llm_response(client, st.session_state.model_params, messages, st.session_state.provider):
+        full_response = ""
+        async for chunk in stream_llm_response(
+            client,
+            st.session_state.model_params,
+            st.session_state.messages,
+            st.session_state.provider
+        ):
             full_response += chunk
             message_placeholder.markdown(full_response + "▌")
         message_placeholder.markdown(full_response)
 
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        # Save assistant response
+        st.session_state.messages.append(
+            {"role": "assistant", "content": full_response}
+        )
 
 def handle_file_upload(uploaded_file):
     # Handles the uploaded file and returns its text content
@@ -526,3 +548,27 @@ from utils import (
     handle_file_upload,
     export_chat,
 )
+
+def process_user_prompt(prompt: str) -> str:
+    """
+    Process and validate user input prompt
+    """
+    try:
+        if not prompt or not prompt.strip():
+            logger.warning("Empty prompt received")
+            raise ValueError("Prompt cannot be empty")
+
+        sanitized = sanitize_input(prompt)
+        logger.info(f"Processing user prompt: {sanitized[:100]}...")
+        return sanitized
+
+    except Exception as e:
+        logger.error(f"Error processing prompt: {str(e)}", exc_info=True)
+        raise
+
+def sanitize_input(text: str) -> str:
+    """
+    Remove unwanted characters and normalize input
+    """
+    sanitized = re.sub(r'[^\w\s\-.,?!]', '', text.strip())
+    return sanitized
