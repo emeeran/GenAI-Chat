@@ -16,6 +16,8 @@ from utils import (
     process_chat_input,
     handle_file_upload,
     export_chat,
+    process_file_content,
+    update_file_context,
 )
 
 # Absolute imports - specify the full path from the project root
@@ -171,12 +173,31 @@ def setup_sidebar() -> None:
             )
 
         with st.expander("File Upload"):
-            uploaded_file = st.file_uploader("Choose a file", type=['txt', 'csv', 'pdf', 'docx', 'xlsx', 'ppt', 'jpg', 'png', 'md'])
+            uploaded_file = st.file_uploader(
+                "Choose a file",
+                type=['txt', 'csv', 'pdf', 'docx', 'xlsx', 'ppt', 'jpg', 'png', 'md']
+            )
+
             if uploaded_file is not None:
                 try:
                     text_content = handle_file_upload(uploaded_file)
                     st.session_state.file_content = text_content
-                    st.success(f"File '{uploaded_file.name}' loaded successfully! You can now chat about its contents.")
+                    st.success(f"File '{uploaded_file.name}' loaded successfully!")
+
+                    # Add file processing options
+                    operation = st.selectbox(
+                        "Select operation:",
+                        ["Chat about content", "Summarize", "Extract bullet points", "Analyze"]
+                    )
+
+                    if st.button("Process"):
+                        if operation == "Chat about content":
+                            update_file_context()
+                            st.info("File content added to chat context. You can now chat about it!")
+                        else:
+                            prompt = process_file_content(text_content, operation.lower())
+                            asyncio.run(process_chat_input(prompt))
+
                 except Exception as e:
                     st.error(f"Error processing file: {str(e)}")
 

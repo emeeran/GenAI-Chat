@@ -348,3 +348,34 @@ def export_chat(format: str) -> str:
         logger.error(f"Error exporting chat: {e}", exc_info=True)
         st.error(f"An error occurred while exporting the chat: {e}")
         return None
+
+def process_file_content(content: str, operation: str) -> str:
+    """Process file content based on selected operation"""
+    try:
+        if operation == "summarize":
+            prompt = f"Please provide a concise summary of this content:\n\n{content}"
+        elif operation == "bullet_points":
+            prompt = f"Extract the main points as bullets from this content:\n\n{content}"
+        elif operation == "analyze":
+            prompt = f"Analyze the key themes and insights from this content:\n\n{content}"
+
+        user_message = {"role": "user", "content": prompt}
+        st.session_state.messages.append(user_message)
+
+        return prompt
+
+    except Exception as e:
+        logger.error(f"Error processing file content: {str(e)}")
+        raise
+
+def update_file_context():
+    """Update chat context with loaded file content"""
+    if hasattr(st.session_state, 'file_content'):
+        system_message = {
+            "role": "system",
+            "content": f"Context from uploaded file:\n{st.session_state.file_content[:1000]}..."
+        }
+        if not st.session_state.messages:
+            st.session_state.messages = [system_message]
+        else:
+            st.session_state.messages.insert(0, system_message)
