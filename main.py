@@ -2,133 +2,286 @@ import streamlit as st
 import asyncio
 import os
 from functools import lru_cache
+import PyPDF2
+import docx
+import pytesseract
+from PIL import Image
+import io
+import pandas as pd
+from io import StringIO
+
+# Import utility functions from utils.py
+from utils import (
+    perform_ocr,
+    process_excel_file,
+    process_ppt_file,
+    get_max_token_limit,
+    get_model_options,
+    get_api_client,
+    stream_llm_response,
+    process_chat_input,
+    handle_file_upload,
+)
 
 # Absolute imports - specify the full path from the project root
 from config import *
-from utils import *
 from database import *
 from api.openai_api import stream_openai_response
 from api.groq_api import stream_groq_response, GroqAPIError
 from api.anthropic_api import stream_anthropic_response
 from persona import PERSONAS
 from content_type import CONTENT_TYPES
-from io import StringIO
-import pandas as pd
 
-@lru_cache(maxsize=None)
-def get_api_client(provider):
-    if provider == "Groq":
-        return GROQ_API_KEY
-    elif provider == "OpenAI":
-        return OPENAI_API_KEY
-    elif provider == "Anthropic":
-        import anthropic
-        return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return None
+def setup_sidebar() -> None:
+    with st.sidebar:
+        st.markdown(
+            "<h2 style='text-align: center;color: #6ca395;'>Select Provider</h2>",
+            unsafe_allow_html=True,
+        )
 
-
-async def stream_llm_response(client, params, messages, provider):
-    try:
-        if provider == "Groq":
-            async for chunk in stream_groq_response(client, params, messages):
-                yield chunk
-        elif provider == "OpenAI":
-            async for chunk in stream_openai_response(client, params, messages):
-                yield chunk
-        elif provider == "Anthropic":
-            async for chunk in stream_anthropic_response(client, params, messages):
-                yield chunk
-        else:
-            yield "Error: Unsupported provider"
-    except GroqAPIError as e:
-        yield f"Groq API Error: {e}"
-    except Exception as e:
-        yield f"API Error: {str(e)}"
-
-
-async def process_chat_input(prompt):
-    messages = st.session_state.messages + [{"role": "user", "content": prompt}]
-    full_response = ""
-
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        client = get_api_client(st.session_state.provider)
-        if client is None:
-            message_placeholder.error("API Key not set for selected provider!")
-            return
-
-        async for chunk in stream_llm_response(client, st.session_state.model_params, messages, st.session_state.provider):
-            full_response += chunk
-            message_placeholder.markdown(full_response + "▌")
-        message_placeholder.markdown(full_response)
-
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-
-def handle_file_upload():
-    uploaded_file = st.file_uploader("Choose a file")
-    if uploaded_file is not None:
-        # To read file as bytes:
-        bytes_data = uploaded_file.getvalue()
-        st.write(bytes_data)
-
-        # To convert to a string based IO:
-        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-        st.write(stringio)
-
-        # To read file as string:
-        string_data = stringio.read()
-        st.write(string_data)
-
-        # Can be used wherever a "file-like" object is accepted:
-        dataframe = pd.read_csv(uploaded_file)
-        st.write(dataframe)
-
-
-def setup_sidebar():
-    st.sidebar.title("Settings")
-    st.session_state.provider = st.sidebar.selectbox("Provider", PROVIDER_OPTIONS)
-
-    model_options = {
-        "Groq": [
-            "llama-3.1-70b-versatile",
-            "llama-3.1-405b-reasoning",
-            "llama-3.1-8b-instant",
-            "llama3-groq-70b-8192-tool-use-preview",
-            "llama3-70b-8192",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it",
-            "whisper-large-v3",
-        ],
-        "OpenAI": [
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-3.5-turbo",
-        ],
-        "Anthropic": [
-            "claude-3-haiku-20240307",
-            "claude-3-5-sonnet-latest",
-            "claude-3-opus-latest",
+        available_providers = [
+            p for p in PROVIDER_OPTIONS if os.getenv(f"{p.upper()}_API_KEY")
         ]
-    }
 
-    selected_model = st.session_state.get("model", model_options.get(st.session_state.provider, [""])[0])
+        if not available_providers:
+            st.error(
+                "No API keys are set. Please set at least one API key in your .env file."
+            )
+            st.stop()
 
-    st.session_state.model_params = {
-        "model": st.sidebar.selectbox("Model", model_options.get(st.session_state.provider, [""]), key="model"),
-        "max_tokens": st.sidebar.number_input("Max Tokens", 1, 4000, 1024),
-        "temperature": st.sidebar.slider("Temperature", 0.0, 2.0, 0.7),
-        "top_p": st.sidebar.slider("Top p", 0.0, 1.0, 1.0),
-    }
+        selected_provider = st.selectbox(
+            "Provider",
+            available_providers,
+            label_visibility="collapsed",
+            format_func=lambda x: "Select Provider" if x == "" else x,
+        )
+        st.session_state.provider = selected_provider
 
-    st.session_state.enable_audio = st.sidebar.checkbox("Enable Audio Response")
-    handle_file_upload()
+        st.markdown(
+            "<h2 style='text-align: center;'>Settings 🛠️ </h2> ", unsafe_allow_html=True
+        )
+
+        with st.expander("Chat Settings", expanded=True):
+            saved_chats = st.session_state.get("saved_chats", [])
+            selected_chat = st.selectbox(
+                "Load Chat History", options=[""] + saved_chats
+            )
+            if selected_chat:
+                st.session_state.load_chat = selected_chat
+
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                if st.button("Rerun"):
+                    st.rerun()
+            with col5:
+                if st.button("New"):
+                    reset_current_chat()
+            with col6:
+                if st.button("Delete"):
+                    if selected_chat:
+                        st.session_state.delete_chat = selected_chat
+                        st.rerun()
+
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                chat_name_input = st.text_input(
+                    "Enter a name for this chat:",
+                    max_chars=50,
+                    label_visibility="collapsed",
+                    placeholder="Chat Name",
+                    help="Type a name for your chat",
+                )
+            with col2:
+                if st.button("Save"):
+                    if chat_name_input:
+                        st.session_state.save_chat = chat_name_input
+                        st.rerun()
+
+        with st.expander("Model"):
+            model_options = get_model_options(st.session_state.provider)
+            if not isinstance(st.session_state.model_params, dict):
+                st.session_state.model_params = {
+                    "model": model_options[0] if model_options else "",
+                    "max_tokens": 1024,
+                    "temperature": 1.0,
+                    "top_p": 1.0,
+                    "top_k": 50,
+                    "frequency_penalty": 0.5,
+                    "presence_penalty": 0.5,
+                }
+
+            st.session_state.model_params["model"] = st.selectbox(
+                "Choose Model:",
+                options=model_options,
+                index=(
+                    model_options.index(st.session_state.model_params["model"])
+                    if st.session_state.model_params["model"] in model_options
+                    else 0
+                ),
+            )
+
+            max_token_limit = get_max_token_limit(
+                st.session_state.model_params["model"]
+            )
+            st.session_state.model_params["max_tokens"] = st.slider(
+                "Max Tokens:",
+                min_value=1,
+                max_value=max_token_limit,
+                value=min(st.session_state.model_params["max_tokens"], max_token_limit),
+                step=1,
+            )
+            st.session_state.model_params["temperature"] = st.slider(
+                "Temperature:",
+                0.0,
+                2.0,
+                st.session_state.model_params["temperature"],
+                0.1,
+            )
+            st.session_state.model_params["top_p"] = st.slider(
+                "Top-p:", 0.0, 1.0, st.session_state.model_params["top_p"], 0.1
+            )
+            st.session_state.model_params["top_k"] = st.slider(
+                "Top-k:", 0, 100, st.session_state.model_params["top_k"]
+            )
+            st.session_state.model_params["frequency_penalty"] = st.slider(
+                "Frequency Penalty:",
+                0.0,
+                1.0,
+                st.session_state.model_params["frequency_penalty"],
+                0.1,
+            )
+            st.session_state.model_params["presence_penalty"] = st.slider(
+                "Presence Penalty:",
+                0.0,
+                1.0,
+                st.session_state.model_params["presence_penalty"],
+                0.1,
+            )
+
+        with st.expander("Persona"):
+            persona_options = list(PERSONAS.keys()) + ["Custom"]
+            st.session_state.persona = st.selectbox(
+                "Select Persona:",
+                options=persona_options,
+                index=persona_options.index("Default"),
+            )
+
+            if st.session_state.persona == "Custom":
+                custom_persona = st.text_area(
+                    "Enter Custom Persona Description:",
+                    value=st.session_state.get("custom_persona", ""),
+                    height=100,
+                    help="Describe the persona you want the AI to adopt.",
+                )
+                st.session_state.custom_persona = custom_persona
+            else:
+                st.text_area(
+                    "Persona Description:",
+                    value=PERSONAS[st.session_state.persona],
+                    height=100,
+                    disabled=True,
+                )
+
+        with st.expander("Audio & Language"):
+            st.session_state.enable_audio = st.checkbox(
+                "Enable Audio Response", value=False
+            )
+            language_options = ["English", "Tamil", "Hindi"]
+            st.session_state.language = st.selectbox(
+                "Select Language:", language_options
+            )
+            voice_options = (
+                VOICE_OPTIONS["OpenAI"]
+                if st.session_state.provider == "OpenAI"
+                else VOICE_OPTIONS["gTTS"]
+            )
+            st.session_state.voice = st.selectbox(
+                f"Select {'Voice' if st.session_state.provider == 'OpenAI' else 'Language Code'}:",
+                voice_options,
+            )
+
+        with st.expander("File Upload"):
+            uploaded_file = st.file_uploader("Choose a file", type=['txt', 'csv', 'pdf', 'docx', 'xlsx', 'ppt', 'jpg', 'png', 'md'])
+            if uploaded_file is not None:
+                try:
+                    text_content = handle_file_upload(uploaded_file)
+                    st.session_state.file_content = text_content
+                    st.success(f"File '{uploaded_file.name}' loaded successfully! You can now chat about its contents.")
+                except Exception as e:
+                    st.error(f"Error processing file: {str(e)}")
+
+        with st.expander("Summarize"):
+            st.session_state.show_summarization = st.checkbox(
+                "Enable Summarization", value=False
+            )
+            if st.session_state.show_summarization:
+                st.session_state.summarization_type = st.selectbox(
+                    "Summarization Type:",
+                    [
+                        "Main Takeaways",
+                        "Main points bulleted",
+                        "Concise Summary",
+                        "Executive Summary",
+                    ],
+                )
+
+        with st.expander("Content Generation"):
+            st.session_state.content_creation_mode = st.checkbox(
+                "Enable Content Creation Mode", value=False
+            )
+            if st.session_state.content_creation_mode:
+                st.session_state.content_type = st.selectbox(
+                    "Select Content Type:", list(CONTENT_TYPES.keys())
+                )
+
+        with st.expander("Export"):
+            export_format = st.selectbox(
+                "Export Format", ["md", "pdf", "txt", "docx", "json"]
+            )
+            if st.button("Export Chat"):
+                filename = export_chat(export_format)
+                if (
+                    filename
+                ):  # Check if filename is valid before showing download button
+                    st.success("Chat exported successfully!")
+                    # Provide a download button for the user
+                    with open(filename, "rb") as f:
+                        st.download_button(
+                            label="Download Chat",
+                            data=f,
+                            file_name=os.path.basename(filename),
+                            mime="application/octet-stream",
+                        )
+
+        st.session_state.color_scheme = st.selectbox("Color Scheme", ["Light", "Dark"])
+        if st.session_state.color_scheme == "Dark":
+            st.markdown(
+                """
+                <style>
+                .stApp {
+                    background-color: #1E1E1E;
+                    color: #FFFFFF;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 async def main():
     st.title("Multimodal Chat App")
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "model_params" not in st.session_state:
+        st.session_state.model_params = {
+            "model": "",
+            "max_tokens": 1024,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": 50,
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.5,
+        }
 
     setup_sidebar()
     for message in st.session_state.messages:
