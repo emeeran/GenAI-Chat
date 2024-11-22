@@ -454,34 +454,33 @@ def save_chat(chat_name: str) -> bool:
         return False
 
 def save_session_state(chat_name: str, session_dir: str = "sessions") -> bool:
-    """Save chat history and settings with a given name"""
+    """Save chat session with given name"""
     try:
         Path(session_dir).mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{chat_name}_{timestamp}.json"
         filepath = Path(session_dir) / filename
 
-        # Save messages and settings
         chat_state = {
             "messages": st.session_state.messages,
             "settings": {
-                "model": st.session_state.model_params["model"],
-                "temperature": st.session_state.model_params["temperature"],
-                "persona": st.session_state.persona,
+                "model": st.session_state.model_params.get("model", ""),
+                "temperature": st.session_state.model_params.get("temperature", 0.7),
+                "persona": st.session_state.get("persona", "Default"),
                 "custom_persona": st.session_state.get("custom_persona", "")
             },
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "name": chat_name
         }
 
         with open(filepath, 'w') as f:
             json.dump(chat_state, f, indent=2)
 
-        # Update saved chats list
         if "saved_chats" not in st.session_state:
             st.session_state.saved_chats = []
         st.session_state.saved_chats.append(filename)
-
         return True
+
     except Exception as e:
         logging.error(f"Failed to save chat: {e}")
         return False

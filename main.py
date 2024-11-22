@@ -19,6 +19,8 @@ from utils import (
     process_file_content,
     update_file_context,
     reset_current_chat,  # Add this import
+    save_session_state,
+    load_session_state,
 )
 
 # Absolute imports - specify the full path from the project root
